@@ -1,0 +1,127 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # 배포가 겹치면 서버에서 compose가 서로를 덮어쓴다. 최신 것만 남긴다.
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew build
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: meta
+        # 커밋 SHA로 태그를 박아 롤백할 버전을 특정할 수 있게 한다.
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy compose file to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: deploy/compose.prod.yaml
+          target: /home/${{ secrets.EC2_USER }}/app
+          strip_components: 1
+
+      - name: Pull and restart
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          IMAGE_REF: ${{ env.IMAGE }}:${{ needs.build-and-push.outputs.tag }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          envs: IMAGE_REF
+          script: |
+            set -euo pipefail
+            cd ~/app
+
+            # GITHUB_TOKEN은 이 워크플로우가 도는 동안만 유효하다 — 서버에 PAT를 남기지 않는다.
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            cat > .env <<'EOF'
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            JWT_SECRET=${{ secrets.JWT_SECRET }}
+            CRYPTO_PASSWORD=${{ secrets.CRYPTO_PASSWORD }}
+            CRYPTO_SALT=${{ secrets.CRYPTO_SALT }}
+            GH_CLIENT_ID=${{ secrets.GH_CLIENT_ID }}
+            GH_CLIENT_SECRET=${{ secrets.GH_CLIENT_SECRET }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            AI_BASE_URL=${{ secrets.AI_BASE_URL }}
+            CORS_ORIGINS=${{ secrets.CORS_ORIGINS }}
+            OAUTH_REDIRECT_URI=${{ secrets.OAUTH_REDIRECT_URI }}
+            EOF
+            chmod 600 .env
+            echo "IMAGE=${IMAGE_REF}" >> .env
+
+            docker compose -f compose.prod.yaml pull
+            docker compose -f compose.prod.yaml up -d --remove-orphans
+            docker logout ghcr.io
+
+            # 헬스체크가 통과할 때까지 기다린다. 안 뜨면 배포를 실패로 만든다.
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost/actuator/health | grep -q '"status":"UP"'; then
+                echo "healthy"
+                docker image prune -f
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "health check failed"
+            docker compose -f compose.prod.yaml logs --tail=100 app
+            exit 1
