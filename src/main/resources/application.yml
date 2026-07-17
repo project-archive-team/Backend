@@ -1,0 +1,67 @@
+spring:
+  application:
+    name: backend
+
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/archive}
+    username: ${DB_USER:archive}
+    password: ${DB_PASSWORD:archive}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate   # 스키마 소유권은 Flyway에 있다
+    open-in-view: false
+
+  flyway:
+    enabled: true
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  security:
+    oauth2:
+      client:
+        registration:
+          # client-id가 비어 있으면 컨텍스트가 아예 안 뜬다. 미설정 시엔 placeholder로 부팅만 시키고,
+          # 실제 OAuth 로그인은 provider 쪽에서 거부된다 — 환경변수를 채워야 동작한다.
+          github:
+            client-id: ${GITHUB_CLIENT_ID:changeme}
+            client-secret: ${GITHUB_CLIENT_SECRET:changeme}
+            scope: read:user,user:email,repo
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:changeme}
+            client-secret: ${GOOGLE_CLIENT_SECRET:changeme}
+            scope: openid,email,profile,https://www.googleapis.com/auth/drive.readonly
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-secret-change-me-at-least-32-bytes}
+    access-ttl: PT1H
+    refresh-ttl: P14D
+  crypto:
+    password: ${CRYPTO_PASSWORD:dev-only-password}
+    salt: ${CRYPTO_SALT:5c0744940b5c369b}   # hex
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173}
+  oauth:
+    redirect-uri: ${OAUTH_REDIRECT_URI:http://localhost:5173/oauth/callback}
+  ai:
+    base-url: ${AI_BASE_URL:http://localhost:8000}
+  upload:
+    dir: ${UPLOAD_DIR:./uploads}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  level:
+    com.projectarchive.backend: DEBUG

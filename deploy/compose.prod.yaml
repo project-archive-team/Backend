@@ -1,0 +1,49 @@
+# EC2에서 도는 구성. 워크플로우가 이 파일과 .env를 서버로 복사한 뒤 `docker compose up -d`.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: archive
+      POSTGRES_USER: archive
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U archive"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # DB는 외부로 열지 않는다 — app 컨테이너만 접근한다.
+
+  app:
+    image: ${IMAGE:?required}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/archive
+      DB_USER: archive
+      DB_PASSWORD: ${DB_PASSWORD:?required}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      CRYPTO_PASSWORD: ${CRYPTO_PASSWORD:?required}
+      CRYPTO_SALT: ${CRYPTO_SALT:?required}
+      GITHUB_CLIENT_ID: ${GH_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GH_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      AI_BASE_URL: ${AI_BASE_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI}
+    ports:
+      - "80:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  pgdata:
