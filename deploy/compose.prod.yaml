@@ -3,6 +3,8 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # 인스턴스 전체가 2GB뿐이다. 한도가 없으면 JVM과 서로 밀어내다 OOM으로 죽는다.
+    mem_limit: 400m
     environment:
       POSTGRES_DB: archive
       POSTGRES_USER: archive
@@ -19,6 +21,8 @@ services:
   app:
     image: ${IMAGE:?required}
     restart: unless-stopped
+    # JVM은 이 한도를 보고 힙을 잡는다(Dockerfile의 MaxRAMPercentage=75 → 약 640m).
+    mem_limit: 850m
     depends_on:
       db:
         condition: service_healthy
