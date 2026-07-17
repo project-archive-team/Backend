@@ -1,0 +1,55 @@
+# EC2에서 도는 구성. 워크플로우가 이 파일과 .env를 서버로 복사한 뒤 `docker compose up -d`.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # 인스턴스 전체가 2GB뿐이다. 한도가 없으면 JVM과 서로 밀어내다 OOM으로 죽는다.
+    mem_limit: 400m
+    environment:
+      POSTGRES_DB: archive
+      POSTGRES_USER: archive
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U archive"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # DB는 외부로 열지 않는다 — app 컨테이너만 접근한다.
+
+  app:
+    image: ${IMAGE:?required}
+    restart: unless-stopped
+    # JVM은 이 한도를 보고 힙을 잡는다(Dockerfile의 MaxRAMPercentage=75 → 약 640m).
+    mem_limit: 850m
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/archive
+      DB_USER: archive
+      DB_PASSWORD: ${DB_PASSWORD:?required}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      CRYPTO_PASSWORD: ${CRYPTO_PASSWORD:?required}
+      CRYPTO_SALT: ${CRYPTO_SALT:?required}
+      # 빈 문자열을 넘기면 Spring이 "설정된 값"으로 받아 OAuth 등록이 실패하고 앱이 부팅되지 않는다.
+      # 미설정 시엔 변수를 아예 비워두는 게 아니라 placeholder를 넣어야 한다.
+      GITHUB_CLIENT_ID: ${GH_CLIENT_ID:-changeme}
+      GITHUB_CLIENT_SECRET: ${GH_CLIENT_SECRET:-changeme}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-changeme}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-changeme}
+      AI_BASE_URL: ${AI_BASE_URL:-http://localhost:8000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      OAUTH_REDIRECT_URI: ${OAUTH_REDIRECT_URI:-http://localhost:5173/oauth/callback}
+    ports:
+      - "80:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+
+volumes:
+  pgdata:
