@@ -99,6 +99,12 @@ class ApiSmokeTest {
     }
 
     @Test
+    void swaggerIsReachableWithoutAuth() {
+        assertThat(mvc.get().uri("/v3/api-docs").exchange())
+                .bodyJson().extractingPath("$.paths./api/projects").isNotNull();
+    }
+
+    @Test
     void duplicateEmailIsRejected() throws Exception {
         signup("dup@example.com");
         assertThat(post("/api/auth/signup",

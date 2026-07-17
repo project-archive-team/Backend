@@ -32,6 +32,7 @@ build/
 .idea
 *.iml
 .vscode/
+.claude/
 
 # Secrets / local env
 .env

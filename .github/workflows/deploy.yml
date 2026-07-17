@@ -10,9 +10,6 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-env:
-  IMAGE: ghcr.io/${{ github.repository }}
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,13 +29,18 @@ jobs:
       contents: read
       packages: write
     outputs:
-      tag: ${{ steps.meta.outputs.tag }}
+      image: ${{ steps.meta.outputs.image }}
     steps:
       - uses: actions/checkout@v4
 
       - id: meta
         # 커밋 SHA로 태그를 박아 롤백할 버전을 특정할 수 있게 한다.
-        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+        # github.repository를 그대로 쓰면 저장소명의 대문자 B 때문에 태그가 거부된다
+        # ("repository name must be lowercase") — 소문자로 내려서 쓴다.
+        run: |
+          repo=$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')
+          echo "image=ghcr.io/${repo}:${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "latest=ghcr.io/${repo}:latest" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -53,8 +55,8 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE }}:latest
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -80,7 +82,7 @@ jobs:
       - name: Pull and restart
         uses: appleboy/ssh-action@v1.2.0
         env:
-          IMAGE_REF: ${{ env.IMAGE }}:${{ needs.build-and-push.outputs.tag }}
+          IMAGE_REF: ${{ needs.build-and-push.outputs.image }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
