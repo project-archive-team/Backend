@@ -20,8 +20,14 @@ public class AiClient {
     private final RestClient http;
 
     public AiClient(@Value("${app.ai.base-url}") String baseUrl) {
+        // JDK HttpClient는 기본이 HTTP/2라 평문 http에 h2c 업그레이드를 시도한다.
+        // uvicorn(h11)은 h2c를 모르고 업그레이드 요청의 본문을 버려서, FastAPI가 body 없음으로 422를 낸다.
+        // 업그레이드 실패는 호스트별로 기억되므로 첫 호출만 깨지는 간헐적 502로 보인다 — HTTP/1.1로 고정한다.
         var factory = new JdkClientHttpRequestFactory(
-                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+                HttpClient.newBuilder()
+                        .version(HttpClient.Version.HTTP_1_1)
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .build());
         // LLM 호출이라 느리다. 기본 타임아웃이면 요약·답변 생성이 중간에 끊긴다.
         factory.setReadTimeout(Duration.ofSeconds(120));
 
