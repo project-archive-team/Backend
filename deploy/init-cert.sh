@@ -1,9 +1,9 @@
 #!/bin/sh
 # Let's Encrypt 최초 발급. 서버의 ~/app 에서 한 번만 돌린다.
 #
-# 닭과 달걀: nginx.conf가 인증서 경로를 참조하니 인증서가 없으면 nginx가 안 뜨고,
-# nginx가 안 뜨면 ACME 챌린지를 못 받아 인증서를 못 만든다.
-# 그래서 더미 인증서로 nginx를 먼저 띄우고, 진짜 인증서로 갈아끼운다.
+# nginx.conf가 인증서 경로를 참조하니 인증서가 없으면 nginx가 뜨지 못한다.
+# 그래서 최초 발급만 nginx를 내리고 certbot이 직접 80을 잡는 standalone으로 받는다.
+# 이후 갱신은 nginx를 띄운 채 webroot로 certbot 컨테이너가 알아서 한다.
 set -eu
 
 DOMAIN=88popo.kro.kr
@@ -16,22 +16,14 @@ if $COMPOSE run --rm --entrypoint sh certbot -c "[ -s $LIVE/fullchain.pem ]" 2>/
     exit 0
 fi
 
-echo "1/4 더미 인증서 생성"
-$COMPOSE run --rm --entrypoint sh certbot -c "
-    mkdir -p $LIVE &&
-    openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-        -keyout $LIVE/privkey.pem -out $LIVE/fullchain.pem -subj '/CN=$DOMAIN'"
+echo "1/3 nginx 정지 (80 비우기)"
+$COMPOSE stop nginx
 
-echo "2/4 nginx 기동"
-$COMPOSE up -d nginx
-
-echo "3/4 더미 치우고 실제 발급"
-$COMPOSE run --rm --entrypoint sh certbot -c "rm -rf $LIVE"
-# compose의 entrypoint가 갱신 루프라 --entrypoint로 덮지 않으면 인자가 통째로 무시된다.
-$COMPOSE run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
+echo "2/3 인증서 발급"
+$COMPOSE run --rm -p 80:80 --entrypoint certbot certbot certonly --standalone \
     -d "$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email --non-interactive
 
-echo "4/4 nginx reload"
-$COMPOSE exec nginx nginx -s reload
+echo "3/3 nginx 기동"
+$COMPOSE up -d nginx
 
 echo "완료: https://$DOMAIN"
