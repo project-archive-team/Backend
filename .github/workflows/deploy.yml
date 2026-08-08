@@ -75,7 +75,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: deploy/compose.prod.yaml
+          source: "deploy/compose.prod.yaml,deploy/nginx.conf,deploy/init-cert.sh"
           target: /home/${{ secrets.EC2_USER }}/app
           strip_components: 1
 
@@ -117,7 +117,7 @@ jobs:
 
             # 헬스체크가 통과할 때까지 기다린다. 안 뜨면 배포를 실패로 만든다.
             for i in $(seq 1 30); do
-              if curl -fsS http://localhost/actuator/health | grep -q '"status":"UP"'; then
+              if curl -fsS http://localhost:8080/actuator/health | grep -q '"status":"UP"'; then
                 echo "healthy"
                 docker image prune -f
                 exit 0
