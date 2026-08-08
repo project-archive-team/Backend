@@ -78,6 +78,21 @@ public class ProjectController {
         return service.artifacts(id, userId, type);
     }
 
+    /** 파일 대신 본문을 직접 붙여넣어 등록하는 경로. */
+    @PostMapping("/{id}/artifacts")
+    @ResponseStatus(HttpStatus.CREATED)
+    public ArtifactView addArtifact(@CurrentUserId Long userId, @PathVariable Long id,
+                                    @Valid @RequestBody CreateArtifactRequest req) {
+        return service.addArtifact(id, userId, req);
+    }
+
+    @DeleteMapping("/{id}/artifacts/{artifactId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteArtifact(@CurrentUserId Long userId, @PathVariable Long id,
+                               @PathVariable Long artifactId) {
+        service.deleteArtifact(id, userId, artifactId);
+    }
+
     @GetMapping("/{id}/timeline")
     public List<ArtifactView> timeline(@CurrentUserId Long userId, @PathVariable Long id) {
         return service.timeline(id, userId);

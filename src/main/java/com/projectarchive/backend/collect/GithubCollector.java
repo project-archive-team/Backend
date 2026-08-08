@@ -37,13 +37,58 @@ public class GithubCollector implements Collector {
         return Source.Type.GITHUB;
     }
 
+    /** PR 수집 상한. 커밋과 달리 개수가 적어 넉넉히 잡아도 호출 비용이 낮다. */
+    private static final int PR_LIMIT = 50;
+
     @Override
     public List<RawItem> collect(Source source, String accessToken) {
         String repo = normalizeRepo(source.getExternalRef());
         List<RawItem> items = new ArrayList<>();
         items.addAll(commits(repo, accessToken));
+        items.addAll(pullRequests(repo, accessToken));
         items.addAll(files(repo, accessToken));
         return items;
+    }
+
+    /**
+     * PR은 본문에 "왜 이렇게 고쳤는지"가 남아 있어 포트폴리오 근거로 커밋보다 값이 크다.
+     * 병합 여부와 리뷰 논의가 드러나도록 상태와 본문을 함께 담는다.
+     */
+    private List<RawItem> pullRequests(String repo, String token) {
+        JsonNode arr = get(token, "/repos/{repo}/pulls?state=all&per_page=" + PR_LIMIT
+                + "&sort=updated&direction=desc", repo);
+        List<RawItem> out = new ArrayList<>();
+        for (JsonNode pr : arr) {
+            out.add(toPullRequestItem(pr));
+        }
+        return out;
+    }
+
+    static RawItem toPullRequestItem(JsonNode pr) {
+        int number = pr.path("number").asInt();
+        String title = pr.path("title").asString("");
+        String body = pr.path("body").asString("");
+        // merged_at은 병합 전엔 null로 온다. state는 병합돼도 closed라 따로 구분한다.
+        boolean merged = pr.path("merged_at").asString(null) != null;
+        String state = merged ? "merged" : pr.path("state").asString("open");
+
+        StringBuilder text = new StringBuilder()
+                .append("PR #").append(number).append(' ').append(title).append('\n')
+                .append("상태: ").append(state).append('\n');
+        if (!body.isBlank()) {
+            text.append('\n').append(body);
+        }
+
+        return new RawItem(
+                Artifact.Type.DOC,
+                // 커밋 sha와 겹치지 않도록 접두사를 붙인다.
+                "pr-" + number,
+                "PR #" + number + " " + title,
+                null,
+                text.toString(),
+                pr.path("user").path("login").asString(null),
+                parseInstant(pr.path("created_at").asString(null)),
+                pr.path("html_url").asString(null));
     }
 
     /** "https://github.com/owner/repo.git", "owner/repo" 등을 owner/repo로 통일. */

@@ -57,6 +57,51 @@ public class AiClient {
 
     public record InterviewResponse(String answer, List<Citation> citations) {}
 
+    public record IndexDeleteRequest(Long projectId, List<Long> artifactIds) {}
+
+    // ── 취업 도구 / 포트폴리오 ────────────────────────────────────────────────
+
+    public record CareerStarRequest(Long projectId, String jobRole, String question) {}
+
+    public record StarSections(String situation, String task, String action, String result) {}
+
+    public record CareerStarResponse(String jobRole, String question, StarSections star,
+                                     String finalAnswer, List<String> missingEvidence,
+                                     List<Citation> citations) {}
+
+    public record InterviewQuestionsRequest(Long projectId, String jobRole, int questionCount) {}
+
+    public record FollowUp(String question, String recommendedAnswer) {}
+
+    public record InterviewQuestion(String category, String likelihood, String question,
+                                    String modelAnswer, List<String> checkpoints,
+                                    List<FollowUp> followUps, List<Citation> citations) {}
+
+    public record InterviewQuestionsResponse(List<InterviewQuestion> questions) {}
+
+    public record PortfolioReportRequest(Long projectId, String projectName, String period,
+                                         String teamSize, String role) {}
+
+    public record ExecutiveSummary(String servicePurpose, String targetUsers, String period,
+                                   String teamSize, String role) {}
+
+    public record PortfolioTech(String name, String category, String reason) {}
+
+    public record Contribution(String title, String description, List<String> metrics) {}
+
+    public record Troubleshooting(String title, List<String> tags, String situation,
+                                  String action, String result) {}
+
+    public record Retrospective(String technicalGrowth, String collaboration, String futureRoadmap) {}
+
+    public record PortfolioReportResponse(Long projectId, String projectName, Instant generatedAt,
+                                          String oneLineSummary, ExecutiveSummary executiveSummary,
+                                          List<PortfolioTech> techStack, String systemArchitecture,
+                                          String dataPipeline, List<Contribution> contributions,
+                                          List<Troubleshooting> troubleshooting,
+                                          Retrospective retrospective, List<String> missingEvidence,
+                                          List<Citation> citations) {}
+
     // ── 호출 ────────────────────────────────────────────────────────────────
 
     public IndexResponse index(IndexRequest req) {
@@ -73,5 +118,27 @@ public class AiClient {
 
     public InterviewResponse interview(InterviewRequest req) {
         return http.post().uri("/interview").body(req).retrieve().body(InterviewResponse.class);
+    }
+
+    public CareerStarResponse careerStar(CareerStarRequest req) {
+        return http.post().uri("/career/star").body(req).retrieve().body(CareerStarResponse.class);
+    }
+
+    public InterviewQuestionsResponse interviewQuestions(InterviewQuestionsRequest req) {
+        return http.post().uri("/career/interview-questions").body(req)
+                .retrieve().body(InterviewQuestionsResponse.class);
+    }
+
+    public PortfolioReportResponse portfolioReport(PortfolioReportRequest req) {
+        return http.post().uri("/portfolio/report").body(req)
+                .retrieve().body(PortfolioReportResponse.class);
+    }
+
+    public void indexDelete(IndexDeleteRequest req) {
+        http.post().uri("/index/delete").body(req).retrieve().toBodilessEntity();
+    }
+
+    public void deleteProjectIndex(Long projectId) {
+        http.delete().uri("/index/projects/{id}", projectId).retrieve().toBodilessEntity();
     }
 }

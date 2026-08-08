@@ -63,6 +63,12 @@ public class Artifact {
     @Column(nullable = false)
     private boolean indexed = false;
 
+    /** 사용자가 직접 등록할 때만 붙는다. 수집기가 만든 아티팩트는 비어 있다. */
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "artifact_tags", joinColumns = @JoinColumn(name = "artifact_id"))
+    @Column(name = "tag")
+    private java.util.List<String> tags = new java.util.ArrayList<>();
+
     public Artifact(Project project, Source source, Type type, String externalId,
                     String title, String path, String content, String author,
                     Instant occurredAt, String url) {
@@ -91,5 +97,12 @@ public class Artifact {
 
     public void markIndexed() {
         this.indexed = true;
+    }
+
+    public void replaceTags(java.util.List<String> tags) {
+        this.tags.clear();
+        if (tags != null) {
+            this.tags.addAll(tags);
+        }
     }
 }

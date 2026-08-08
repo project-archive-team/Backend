@@ -17,6 +17,9 @@ public class Project {
 
     public enum Status { PENDING, ANALYZING, DONE }
 
+    /** 수집 상태(Status)와 별개로, 사용자가 직접 고르는 진행/완료 구분. */
+    public enum State { ONGOING, COMPLETED }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -36,6 +39,17 @@ public class Project {
     @Column(nullable = false)
     private Status status = Status.PENDING;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private State state = State.ONGOING;
+
+    @Column(columnDefinition = "text")
+    private String description;
+
+    private String role;
+
+    private String category;
+
     @ElementCollection(fetch = FetchType.LAZY)
     @CollectionTable(name = "project_tech_stack", joinColumns = @JoinColumn(name = "project_id"))
     @Column(name = "tech")
@@ -52,6 +66,15 @@ public class Project {
         this.period = period;
         this.memberCount = memberCount;
         this.techStack = techStack == null ? new ArrayList<>() : new ArrayList<>(techStack);
+    }
+
+    public void describe(String description, String role, String category, State state) {
+        this.description = description;
+        this.role = role;
+        this.category = category;
+        if (state != null) {
+            this.state = state;
+        }
     }
 
     public void markStatus(Status status) {

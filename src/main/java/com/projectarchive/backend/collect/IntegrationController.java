@@ -31,6 +31,19 @@ public class IntegrationController {
         tokenStore.put(user, OauthToken.Provider.NOTION, req.token());
     }
 
+    /** 연결 해제. 저장된 토큰을 지우면 해당 소스 수집은 그때부터 실패한다. */
+    @DeleteMapping("/{provider}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void disconnect(@CurrentUserId Long userId, @PathVariable String provider) {
+        OauthToken.Provider target;
+        try {
+            target = OauthToken.Provider.valueOf(provider.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "알 수 없는 provider: " + provider);
+        }
+        tokenStore.remove(userId, target);
+    }
+
     /** 어떤 provider가 연결돼 있는지 — 소스 연결 화면의 체크 표시용. */
     @GetMapping
     public java.util.Map<String, Boolean> connected(@CurrentUserId Long userId) {

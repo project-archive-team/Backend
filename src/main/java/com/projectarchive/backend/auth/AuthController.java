@@ -9,8 +9,11 @@ import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -31,7 +34,11 @@ public class AuthController {
 
     public record TokenResponse(String accessToken, String refreshToken, long expiresIn) {}
 
-    public record MeResponse(Long id, String email, String name) {}
+    public record MeResponse(Long id, String email, String name,
+                             String jobTitle, String bio, String theme, List<String> techStack) {}
+
+    public record UpdateMeRequest(String name, String jobTitle, String bio,
+                                  String theme, List<String> techStack) {}
 
     @PostMapping("/signup")
     @ResponseStatus(HttpStatus.CREATED)
@@ -67,10 +74,27 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @Transactional(readOnly = true)
     public MeResponse me(@CurrentUserId Long userId) {
+        return toView(users.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED)));
+    }
+
+    /** null인 항목은 그대로 둔다 — 마이페이지가 섹션별로 따로 저장한다. */
+    @PatchMapping("/me")
+    @Transactional
+    public MeResponse updateMe(@CurrentUserId Long userId, @RequestBody UpdateMeRequest req) {
         User user = users.findById(userId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
-        return new MeResponse(user.getId(), user.getEmail(), user.getName());
+        user.updateProfile(req.name(), req.jobTitle(), req.bio(), req.theme(), req.techStack());
+        return toView(user);
+    }
+
+    private static MeResponse toView(User user) {
+        return new MeResponse(user.getId(), user.getEmail(), user.getName(),
+                user.getJobTitle(), user.getBio(), user.getTheme(),
+                // 영속 컬렉션은 트랜잭션 밖에서 초기화하다 터진다. 여기서 복사한다.
+                List.copyOf(user.getTechStack()));
     }
 
     private TokenResponse tokensFor(User user) {

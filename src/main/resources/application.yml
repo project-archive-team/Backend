@@ -34,6 +34,11 @@ spring:
             client-id: ${GOOGLE_CLIENT_ID:changeme}
             client-secret: ${GOOGLE_CLIENT_SECRET:changeme}
             scope: openid,email,profile,https://www.googleapis.com/auth/drive.readonly
+        provider:
+          google:
+            # access_type=offline이 없으면 refresh token을 안 준다. 그러면 Drive 수집이 1시간 뒤 죽는다.
+            # prompt=consent가 있어야 재로그인 때도 refresh token을 다시 발급한다.
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&prompt=consent
 
 app:
   jwt:

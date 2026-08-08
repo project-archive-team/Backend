@@ -7,10 +7,14 @@ import com.projectarchive.backend.repo.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.encrypt.TextEncryptor;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClient;
 import org.springframework.security.oauth2.client.OAuth2AuthorizedClientService;
+import org.springframework.web.client.RestClient;
+import tools.jackson.databind.JsonNode;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
@@ -26,6 +30,7 @@ import java.io.IOException;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
 
     private final UserRepository users;
@@ -46,12 +51,13 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         String registrationId = oauthToken.getAuthorizedClientRegistrationId();
         OAuth2User principal = oauthToken.getPrincipal();
 
-        String email = resolveEmail(registrationId, principal);
+        var client = authorizedClients.loadAuthorizedClient(registrationId, oauthToken.getName());
+        String email = resolveEmail(registrationId, principal, client);
         String name = resolveName(registrationId, principal);
 
         User user = users.findByEmail(email).orElseGet(() -> users.save(User.oauthOnly(email, name)));
 
-        saveProviderToken(user, registrationId, oauthToken);
+        saveProviderToken(user, registrationId, client);
 
         String jwt = jwtService.issueAccess(user.getId());
         String refresh = jwtService.issueRefresh(user.getId());
@@ -62,8 +68,7 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         response.sendRedirect(target);
     }
 
-    private void saveProviderToken(User user, String registrationId, OAuth2AuthenticationToken auth) {
-        var client = authorizedClients.loadAuthorizedClient(registrationId, auth.getName());
+    private void saveProviderToken(User user, String registrationId, OAuth2AuthorizedClient client) {
         if (client == null) {
             return;
         }
@@ -78,17 +83,42 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
                         () -> tokens.save(new OauthToken(user, provider, access, refresh, expiresAt)));
     }
 
-    private String resolveEmail(String registrationId, OAuth2User principal) {
+    private String resolveEmail(String registrationId, OAuth2User principal, OAuth2AuthorizedClient client) {
         String email = principal.getAttribute("email");
         if (email != null) {
             return email;
         }
-        // ponytail: GitHub은 이메일이 비공개면 attribute에 안 실린다. /user/emails를 부르는 대신
-        // GitHub이 실제로 발급하는 noreply 주소 규칙을 쓴다. 이메일 발송이 필요해지면 그때 API 호출로 교체.
         if ("github".equals(registrationId)) {
-            return principal.getAttribute("id") + "+" + principal.getAttribute("login") + "@users.noreply.github.com";
+            // 이메일이 비공개면 attribute에 안 실린다. noreply 주소로 때우면 기존 계정과 이메일이 어긋나
+            // 같은 사람에게 계정이 하나 더 생긴다 — /user/emails로 실제 주소를 확인한다.
+            String primary = githubPrimaryEmail(client);
+            return primary != null
+                    ? primary
+                    : principal.getAttribute("id") + "+" + principal.getAttribute("login") + "@users.noreply.github.com";
         }
         throw new IllegalStateException("no email from provider: " + registrationId);
+    }
+
+    private String githubPrimaryEmail(OAuth2AuthorizedClient client) {
+        if (client == null) {
+            return null;
+        }
+        try {
+            JsonNode emails = RestClient.create().get()
+                    .uri("https://api.github.com/user/emails")
+                    .header("Authorization", "Bearer " + client.getAccessToken().getTokenValue())
+                    .header("Accept", "application/vnd.github+json")
+                    .retrieve().body(JsonNode.class);
+            for (JsonNode e : emails) {
+                if (e.path("primary").asBoolean() && e.path("verified").asBoolean()) {
+                    return e.path("email").asString(null);
+                }
+            }
+        } catch (Exception e) {
+            // user:email 스코프가 없거나 API가 막히면 noreply 주소로 떨어진다.
+            log.warn("github 기본 이메일 조회 실패: {}", e.getMessage());
+        }
+        return null;
     }
 
     private String resolveName(String registrationId, OAuth2User principal) {

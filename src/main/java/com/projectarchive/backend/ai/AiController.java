@@ -67,6 +67,42 @@ public class AiController {
         return call(() -> ai.interview(new AiClient.InterviewRequest(id, req.question())));
     }
 
+    public record StarRequest(@NotBlank String jobRole, @NotBlank String question) {}
+
+    /** 자소서 문항에 대한 STAR 4단 분해. 화면의 STAR 박스가 이 응답을 그대로 쓴다. */
+    @PostMapping("/career/star")
+    public AiClient.CareerStarResponse careerStar(@CurrentUserId Long userId, @PathVariable Long id,
+                                                  @Valid @RequestBody StarRequest req) {
+        projectService.owned(id, userId);
+        return call(() -> ai.careerStar(new AiClient.CareerStarRequest(id, req.jobRole(), req.question())));
+    }
+
+    public record InterviewQuestionsRequest(@NotBlank String jobRole, Integer questionCount) {}
+
+    @PostMapping("/career/interview-questions")
+    public AiClient.InterviewQuestionsResponse interviewQuestions(@CurrentUserId Long userId,
+                                                                  @PathVariable Long id,
+                                                                  @Valid @RequestBody InterviewQuestionsRequest req) {
+        projectService.owned(id, userId);
+        // AI 서버가 1~5만 받는다. 화면이 값을 안 주면 3장.
+        int count = req.questionCount() == null ? 3 : Math.clamp(req.questionCount(), 1, 5);
+        return call(() -> ai.interviewQuestions(new AiClient.InterviewQuestionsRequest(id, req.jobRole(), count)));
+    }
+
+    /** 수집된 자료로 포트폴리오 전체를 구조화한다. */
+    @PostMapping("/portfolio")
+    public AiClient.PortfolioReportResponse portfolio(@CurrentUserId Long userId, @PathVariable Long id) {
+        var project = projectService.owned(id, userId);
+        // AI 서버가 이 필드들을 "있으면 1자 이상"으로 검증한다. 빈 문자열은 null로 눕혀야 422를 안 맞는다.
+        return call(() -> ai.portfolioReport(new AiClient.PortfolioReportRequest(
+                id, blankToNull(project.getName()), blankToNull(project.getPeriod()),
+                project.getMemberCount() + "인", blankToNull(project.getRole()))));
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s;
+    }
+
     /** AI 서버가 죽었을 때 500 대신 502로 — 프론트가 우리 버그와 구분할 수 있게. */
     private <T> T call(java.util.function.Supplier<T> supplier) {
         try {

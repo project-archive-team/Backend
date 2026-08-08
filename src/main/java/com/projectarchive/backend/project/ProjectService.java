@@ -1,10 +1,12 @@
 package com.projectarchive.backend.project;
 
+import com.projectarchive.backend.ai.AiClient;
 import com.projectarchive.backend.collect.FileParser;
 import com.projectarchive.backend.collect.SyncService;
 import com.projectarchive.backend.domain.*;
 import com.projectarchive.backend.repo.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +21,7 @@ import static com.projectarchive.backend.project.ProjectDtos.*;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProjectService {
 
     private final ProjectRepository projects;
@@ -27,6 +30,7 @@ public class ProjectService {
     private final UserRepository users;
     private final FileParser fileParser;
     private final SyncService syncService;
+    private final AiClient ai;
 
     /** 모든 진입점이 이걸 거친다 — 남의 프로젝트는 404. */
     @Transactional(readOnly = true)
@@ -45,6 +49,7 @@ public class ProjectService {
         User owner = users.findById(userId).orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED));
         Project project = projects.save(new Project(owner, req.name(), req.period(),
                 Math.max(req.members(), 1), req.techStack()));
+        project.describe(req.description(), req.role(), req.category(), req.state());
         return summarize(project);
     }
 
@@ -56,7 +61,9 @@ public class ProjectService {
 
     @Transactional
     public void delete(Long projectId, Long userId) {
-        projects.delete(owned(projectId, userId));
+        Project project = owned(projectId, userId);
+        dropFromIndex(() -> ai.deleteProjectIndex(projectId));
+        projects.delete(project);
     }
 
     @Transactional
@@ -116,6 +123,48 @@ public class ProjectService {
         return saved;
     }
 
+    /**
+     * 화면에서 제목·유형·본문을 직접 입력해 등록하는 경로. 업로드 파일과 같은 UPLOAD 소스에 붙는다.
+     * externalId는 제목으로 잡아 같은 제목을 다시 올리면 덮어쓴다.
+     */
+    @Transactional
+    public ArtifactView addArtifact(Long projectId, Long userId, CreateArtifactRequest req) {
+        Project project = owned(projectId, userId);
+        Source source = sources.findByProjectIdAndTypeAndExternalRef(projectId, Source.Type.UPLOAD, null)
+                .orElseGet(() -> sources.save(new Source(project, Source.Type.UPLOAD, null)));
+
+        Artifact artifact = artifacts.findBySourceIdAndExternalId(source.getId(), req.title())
+                .map(existing -> {
+                    existing.updateContent(req.title(), req.content(), Instant.now());
+                    return existing;
+                })
+                .orElseGet(() -> artifacts.save(new Artifact(project, source, req.type(),
+                        req.title(), req.title(), null, req.content(), null, Instant.now(), null)));
+        artifact.replaceTags(req.tags());
+        source.markDone();
+        return ArtifactView.of(artifact);
+    }
+
+    /** DB에서 지우기 전에 AI 벡터 인덱스에서도 뺀다 — 안 그러면 삭제한 자료가 답변에 계속 인용된다. */
+    @Transactional
+    public void deleteArtifact(Long projectId, Long userId, Long artifactId) {
+        owned(projectId, userId);
+        Artifact artifact = artifacts.findById(artifactId)
+                .filter(a -> a.getProject().getId().equals(projectId))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "artifact not found"));
+        dropFromIndex(() -> ai.indexDelete(new AiClient.IndexDeleteRequest(projectId, List.of(artifactId))));
+        artifacts.delete(artifact);
+    }
+
+    /** 인덱스 정리는 실패해도 삭제 자체를 막지 않는다 — 남은 벡터는 다음 재색인에서 정리된다. */
+    private void dropFromIndex(Runnable call) {
+        try {
+            call.run();
+        } catch (Exception e) {
+            log.warn("AI 인덱스 삭제 실패 — 본 삭제는 계속 진행한다", e);
+        }
+    }
+
     /** 동기화는 비동기로 던지고 즉시 리턴한다. 진행상황은 syncStatus로 폴링. */
     @Transactional
     public SyncStatus startSync(Long projectId, Long userId) {
@@ -156,9 +205,11 @@ public class ProjectService {
     private ProjectSummary summarize(Project p) {
         Long id = p.getId();
         long commits = artifacts.countByProjectIdAndType(id, Artifact.Type.COMMIT);
-        return new ProjectSummary(id, p.getName(), p.getStatus(),
+        return new ProjectSummary(id, p.getName(), p.getStatus(), p.getState(),
+                p.getDescription(), p.getRole(), p.getCategory(),
                 artifacts.countByProjectId(id) - commits,
                 commits,
+                p.getCreatedAt(),
                 p.getLastSyncedAt(),
                 sources.findByProjectId(id).stream().map(Source::getType).distinct().toList(),
                 // 영속 컬렉션을 그대로 넘기면 트랜잭션 종료 후 Jackson이 초기화를 시도하다 터진다

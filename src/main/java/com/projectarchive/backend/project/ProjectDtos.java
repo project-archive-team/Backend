@@ -18,16 +18,31 @@ public final class ProjectDtos {
     public record CreateRequest(@NotBlank String name,
                                 String period,
                                 @Min(1) int members,
-                                List<String> techStack) {}
+                                List<String> techStack,
+                                String description,
+                                String role,
+                                String category,
+                                Project.State state) {}
 
     public record AddSourceRequest(@NotNull Source.Type type, String externalRef) {}
+
+    /** 직접 입력한 산출물. 파일 업로드(/files)와 달리 본문을 그대로 받는다. */
+    public record CreateArtifactRequest(@NotNull Artifact.Type type,
+                                        @NotBlank String title,
+                                        @NotBlank String content,
+                                        List<String> tags) {}
 
     /** 대시보드 카드용. 와이어프레임의 프로젝트 목록 항목과 1:1. */
     public record ProjectSummary(Long id,
                                  String name,
                                  Project.Status status,
+                                 Project.State state,
+                                 String description,
+                                 String role,
+                                 String category,
                                  long files,
                                  long commits,
+                                 Instant createdAt,
                                  Instant lastSyncedAt,
                                  List<Source.Type> sources,
                                  List<String> techStack,
@@ -39,12 +54,15 @@ public final class ProjectDtos {
 
     public record ProjectDetail(ProjectSummary project, List<SourceView> sources) {}
 
-    public record ArtifactView(Long id, Artifact.Type type, String title, String path,
-                               String author, Instant occurredAt, String url) {
+    public record ArtifactView(Long id, Artifact.Type type, String externalId, String title, String path,
+                               String content, String author, Instant occurredAt, String url,
+                               List<String> tags) {
 
         public static ArtifactView of(Artifact a) {
-            return new ArtifactView(a.getId(), a.getType(), a.getTitle(), a.getPath(),
-                    a.getAuthor(), a.getOccurredAt(), a.getUrl());
+            // 영속 컬렉션을 그대로 넘기면 open-in-view=false 환경에서 직렬화 중에 터진다.
+            return new ArtifactView(a.getId(), a.getType(), a.getExternalId(), a.getTitle(), a.getPath(),
+                    a.getContent(), a.getAuthor(), a.getOccurredAt(), a.getUrl(),
+                    List.copyOf(a.getTags()));
         }
     }
 
