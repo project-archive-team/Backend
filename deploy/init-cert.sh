@@ -27,7 +27,8 @@ $COMPOSE up -d nginx
 
 echo "3/4 더미 치우고 실제 발급"
 $COMPOSE run --rm --entrypoint sh certbot -c "rm -rf $LIVE"
-$COMPOSE run --rm certbot certonly --webroot -w /var/www/certbot \
+# compose의 entrypoint가 갱신 루프라 --entrypoint로 덮지 않으면 인자가 통째로 무시된다.
+$COMPOSE run --rm --entrypoint certbot certbot certonly --webroot -w /var/www/certbot \
     -d "$DOMAIN" --email "$EMAIL" --agree-tos --no-eff-email --non-interactive
 
 echo "4/4 nginx reload"
