@@ -5,6 +5,7 @@ import com.projectarchive.backend.domain.Artifact;
 import com.projectarchive.backend.domain.Source;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
@@ -43,11 +44,31 @@ public class GithubCollector implements Collector {
     @Override
     public List<RawItem> collect(Source source, String accessToken) {
         String repo = normalizeRepo(source.getExternalRef());
-        List<RawItem> items = new ArrayList<>();
-        items.addAll(commits(repo, accessToken));
-        items.addAll(pullRequests(repo, accessToken));
-        items.addAll(files(repo, accessToken));
-        return items;
+        try {
+            List<RawItem> items = new ArrayList<>();
+            items.addAll(commits(repo, accessToken));
+            items.addAll(pullRequests(repo, accessToken));
+            items.addAll(files(repo, accessToken));
+            return items;
+        } catch (HttpClientErrorException e) {
+            throw new IllegalStateException(explain(repo, e.getStatusCode().value()), e);
+        }
+    }
+
+    /**
+     * GitHub 응답 본문을 그대로 화면에 흘리면 읽을 수가 없다.
+     *
+     * 특히 404는 "없는 저장소"만 뜻하지 않는다. 조직이 서드파티 앱 접근을 제한해 두면
+     * 공개 저장소조차 우리 토큰으로는 404로 돌아온다 — 원인이 완전히 다르니 짚어준다.
+     */
+    private static String explain(String repo, int status) {
+        return switch (status) {
+            case 404 -> repo + " 에 접근할 수 없습니다. 저장소 주소가 맞는지, 그리고 조직 설정에서 "
+                    + "이 앱의 접근을 승인(Grant)했는지 확인해 주세요. 승인 전에는 공개 저장소도 404로 막힙니다.";
+            case 401 -> "GitHub 인증이 만료되었습니다. 다시 로그인해 주세요.";
+            case 403 -> "GitHub API 호출 한도에 걸렸거나 접근이 거부되었습니다. 잠시 뒤 다시 시도해 주세요.";
+            default -> repo + " 수집 실패 (GitHub " + status + ")";
+        };
     }
 
     /**
