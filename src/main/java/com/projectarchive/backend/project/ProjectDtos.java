@@ -66,6 +66,10 @@ public final class ProjectDtos {
         }
     }
 
-    /** 수집 진행상황 폴링용. 소스 단위 상태를 그대로 노출한다. */
-    public record SyncStatus(Project.Status status, List<SourceView> sources) {}
+    /**
+     * 수집 진행상황 폴링용. 소스 단위 상태에 더해 색인 진척도까지 준다 —
+     * 소스가 다 끝나도 색인이 남아 있어 화면이 100%를 찍어 놓고 기다리는 일이 없도록.
+     */
+    public record SyncStatus(Project.Status status, List<SourceView> sources,
+                             long artifacts, long indexedArtifacts) {}
 }

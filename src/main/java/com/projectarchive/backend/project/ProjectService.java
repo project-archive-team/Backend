@@ -225,13 +225,40 @@ public class ProjectService {
         }
         project.markStatus(Project.Status.ANALYZING);
         syncService.syncProject(projectId);
-        return new SyncStatus(Project.Status.ANALYZING, sourceViews(projectId));
+        return status(project);
     }
 
     @Transactional(readOnly = true)
     public SyncStatus syncStatus(Long projectId, Long userId) {
         Project project = owned(projectId, userId);
-        return new SyncStatus(project.getStatus(), sourceViews(projectId));
+        return status(project);
+    }
+
+    /**
+     * AI 기능을 쓰기 전에 색인이 끝나 있는지 확인한다.
+     *
+     * 색인은 동기화에서만 돌기 때문에, 수집만 되고 색인이 실패해 있으면 AI는 근거를 못 찾고
+     * "자료에서 확인되지 않았다"만 답한다. 그럴 땐 색인을 걸어 두고 기다리라고 알려준다.
+     */
+    @Transactional
+    public void requireIndexed(Long projectId) {
+        if (artifacts.countByProjectId(projectId) == 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "수집된 자료가 없습니다. 소스를 등록하고 먼저 동기화해 주세요.");
+        }
+        long pending = artifacts.countByProjectIdAndIndexedFalse(projectId);
+        if (pending > 0) {
+            syncService.indexProject(projectId);
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "자료 " + pending + "건이 아직 AI 색인 전입니다. 색인을 시작했습니다.");
+        }
+    }
+
+    private SyncStatus status(Project project) {
+        Long id = project.getId();
+        return new SyncStatus(project.getStatus(), sourceViews(id),
+                artifacts.countByProjectId(id),
+                artifacts.countByProjectId(id) - artifacts.countByProjectIdAndIndexedFalse(id));
     }
 
     @Transactional(readOnly = true)

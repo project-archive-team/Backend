@@ -19,5 +19,8 @@ public interface ArtifactRepository extends JpaRepository<Artifact, Long> {
 
     long countByProjectId(Long projectId);
 
+    /** 아직 벡터로 만들지 않은 자료 수. 0이 아니면 AI가 근거를 못 찾는다. */
+    long countByProjectIdAndIndexedFalse(Long projectId);
+
     long countByProjectIdAndType(Long projectId, Artifact.Type type);
 }

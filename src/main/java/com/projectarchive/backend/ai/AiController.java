@@ -79,6 +79,7 @@ public class AiController {
     public AiClient.CareerStarResponse careerStar(@CurrentUserId Long userId, @PathVariable Long id,
                                                   @Valid @RequestBody StarRequest req) {
         projectService.owned(id, userId);
+        projectService.requireIndexed(id);
         return call(() -> ai.careerStar(new AiClient.CareerStarRequest(id, req.jobRole(), req.question())));
     }
 
@@ -89,6 +90,7 @@ public class AiController {
                                                                   @PathVariable Long id,
                                                                   @Valid @RequestBody InterviewQuestionsRequest req) {
         projectService.owned(id, userId);
+        projectService.requireIndexed(id);
         // AI 서버가 1~5만 받는다. 화면이 값을 안 주면 3장.
         int count = req.questionCount() == null ? 3 : Math.clamp(req.questionCount(), 1, 5);
         return call(() -> ai.interviewQuestions(new AiClient.InterviewQuestionsRequest(id, req.jobRole(), count)));
@@ -110,6 +112,7 @@ public class AiController {
     @Transactional
     public AiClient.PortfolioReportResponse portfolio(@CurrentUserId Long userId, @PathVariable Long id) {
         var project = projectService.owned(id, userId);
+        projectService.requireIndexed(id);
         // AI 서버가 이 필드들을 "있으면 1자 이상"으로 검증한다. 빈 문자열은 null로 눕혀야 422를 안 맞는다.
         var report = call(() -> ai.portfolioReport(new AiClient.PortfolioReportRequest(
                 id, blankToNull(project.getName()), blankToNull(project.getPeriod()),
