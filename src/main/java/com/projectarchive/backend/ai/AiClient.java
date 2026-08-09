@@ -28,8 +28,9 @@ public class AiClient {
                         .version(HttpClient.Version.HTTP_1_1)
                         .connectTimeout(Duration.ofSeconds(5))
                         .build());
-        // LLM 호출이라 느리다. 기본 타임아웃이면 요약·답변 생성이 중간에 끊긴다.
-        factory.setReadTimeout(Duration.ofSeconds(120));
+        // LLM 호출이라 느리다. 색인은 임베딩 분당 쿼터에 걸리면 AI 서버가 쉬었다 재시도하므로
+        // 한 요청이 몇 분까지 늘어난다. 기본 타임아웃이면 그전에 끊긴다.
+        factory.setReadTimeout(Duration.ofSeconds(240));
 
         this.http = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
     }

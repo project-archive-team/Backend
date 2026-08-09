@@ -10,6 +10,8 @@ import org.springframework.web.client.RestClient;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Drive 폴더 하나를 훑어 Docs/Slides를 평문으로 export한다. */
 @Component
@@ -27,10 +29,7 @@ public class DriveCollector implements Collector {
 
     @Override
     public List<RawItem> collect(Source source, String accessToken) {
-        String folderId = source.getExternalRef();
-        if (folderId == null || folderId.isBlank()) {
-            throw new IllegalArgumentException("drive source needs a folder id");
-        }
+        String folderId = normalizeFolderId(source.getExternalRef());
         JsonNode res = http.get()
                 .uri(b -> b.path("/drive/v3/files")
                         .queryParam("q", "'" + folderId + "' in parents and trashed = false")
@@ -62,6 +61,33 @@ public class DriveCollector implements Collector {
         }
         return out;
     }
+
+    /**
+     * 사용자는 주소창의 폴더 URL을 그대로 붙여넣는다. 그걸 폴더 ID로 쓰면 Drive가
+     * "File not found: ." 를 돌려준다 — 흔한 형태에서 ID만 뽑아낸다.
+     */
+    public static String normalizeFolderId(String ref) {
+        if (ref == null || ref.isBlank()) {
+            throw new IllegalArgumentException("Google Drive 소스는 폴더 주소 또는 ID가 필요합니다");
+        }
+        String s = ref.trim();
+
+        Matcher folders = FOLDER_URL.matcher(s);
+        if (folders.find()) {
+            return folders.group(1);
+        }
+        Matcher idParam = ID_PARAM.matcher(s);
+        if (idParam.find()) {
+            return idParam.group(1);
+        }
+        if (s.startsWith("http")) {
+            throw new IllegalArgumentException("폴더 ID를 찾을 수 없는 주소입니다: " + ref);
+        }
+        return s;
+    }
+
+    private static final Pattern FOLDER_URL = Pattern.compile("/folders/([A-Za-z0-9_-]+)");
+    private static final Pattern ID_PARAM = Pattern.compile("[?&]id=([A-Za-z0-9_-]+)");
 
     /** Google 네이티브 문서만 평문 추출. 업로드된 PDF/PPTX는 UploadCollector 경로를 쓴다. */
     private String export(String fileId, String mimeType, String token) {

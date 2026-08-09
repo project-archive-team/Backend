@@ -2,13 +2,17 @@ package com.projectarchive.backend.ai;
 
 import com.projectarchive.backend.auth.CurrentUserId;
 import com.projectarchive.backend.domain.ChatMessage;
+import com.projectarchive.backend.domain.PortfolioReport;
 import com.projectarchive.backend.project.ProjectService;
 import com.projectarchive.backend.repo.ChatMessageRepository;
+import com.projectarchive.backend.repo.PortfolioReportRepository;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.databind.ObjectMapper;
@@ -27,6 +31,7 @@ public class AiController {
     private final AiClient ai;
     private final ProjectService projectService;
     private final ChatMessageRepository chatMessages;
+    private final PortfolioReportRepository portfolioReports;
     private final ObjectMapper objectMapper;
 
     public record AskRequest(@NotBlank String question) {}
@@ -89,14 +94,32 @@ public class AiController {
         return call(() -> ai.interviewQuestions(new AiClient.InterviewQuestionsRequest(id, req.jobRole(), count)));
     }
 
-    /** 수집된 자료로 포트폴리오 전체를 구조화한다. */
+    /** 마지막으로 생성해 둔 리포트. 없으면 204 — 화면은 "아직 생성되지 않음"을 보여준다. */
+    @GetMapping("/portfolio")
+    public ResponseEntity<AiClient.PortfolioReportResponse> savedPortfolio(@CurrentUserId Long userId,
+                                                                          @PathVariable Long id) {
+        projectService.owned(id, userId);
+        return portfolioReports.findById(id)
+                .map(saved -> ResponseEntity.ok(
+                        objectMapper.readValue(saved.getReport(), AiClient.PortfolioReportResponse.class)))
+                .orElseGet(() -> ResponseEntity.noContent().build());
+    }
+
+    /** 수집된 자료로 포트폴리오 전체를 구조화한다. 결과는 저장해 두고 다음 방문에 그대로 보여준다. */
     @PostMapping("/portfolio")
+    @Transactional
     public AiClient.PortfolioReportResponse portfolio(@CurrentUserId Long userId, @PathVariable Long id) {
         var project = projectService.owned(id, userId);
         // AI 서버가 이 필드들을 "있으면 1자 이상"으로 검증한다. 빈 문자열은 null로 눕혀야 422를 안 맞는다.
-        return call(() -> ai.portfolioReport(new AiClient.PortfolioReportRequest(
+        var report = call(() -> ai.portfolioReport(new AiClient.PortfolioReportRequest(
                 id, blankToNull(project.getName()), blankToNull(project.getPeriod()),
                 project.getMemberCount() + "인", blankToNull(project.getRole()))));
+
+        String json = objectMapper.writeValueAsString(report);
+        portfolioReports.findById(id)
+                .ifPresentOrElse(saved -> saved.replace(json),
+                        () -> portfolioReports.save(new PortfolioReport(id, json)));
+        return report;
     }
 
     private static String blankToNull(String s) {

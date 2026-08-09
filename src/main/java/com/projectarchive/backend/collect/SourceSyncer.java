@@ -31,9 +31,14 @@ public class SourceSyncer {
     private final TokenStore tokenStore;
     private final Chunker chunker;
     private final AiClient ai;
+    private final IndexBatchWriter indexWriter;
+
+    /** 한 번에 보낼 청크 수. 임베딩 분당 쿼터에 걸려도 이 묶음까지는 남는다. */
+    private static final int CHUNKS_PER_REQUEST = 80;
 
     public SourceSyncer(List<Collector> collectorList, SourceRepository sources, ArtifactRepository artifacts,
-                        ProjectRepository projects, TokenStore tokenStore, Chunker chunker, AiClient ai) {
+                        ProjectRepository projects, TokenStore tokenStore, Chunker chunker, AiClient ai,
+                        IndexBatchWriter indexWriter) {
         this.collectors = collectorList.stream().collect(Collectors.toMap(Collector::type, Function.identity()));
         this.sources = sources;
         this.artifacts = artifacts;
@@ -41,6 +46,7 @@ public class SourceSyncer {
         this.tokenStore = tokenStore;
         this.chunker = chunker;
         this.ai = ai;
+        this.indexWriter = indexWriter;
     }
 
     @Transactional
@@ -77,34 +83,43 @@ public class SourceSyncer {
                                 item.author(), item.occurredAt(), item.url())));
     }
 
-    /** 아직 인덱싱 안 된 아티팩트를 청킹해서 AI 서버로 넘긴다. */
-    @Transactional
+    /**
+     * 아직 인덱싱 안 된 아티팩트를 청킹해서 AI 서버로 넘긴다.
+     *
+     * 한 번에 다 보내지 않고 나눠 보낸다. 임베딩은 분당 쿼터가 있어 큰 저장소는 중간에 막히는데,
+     * 통째로 보내면 그때까지 성공한 것도 전부 날아가 처음부터 다시 해야 한다.
+     * 묶음마다 커밋해 두면 다음 동기화가 남은 것만 이어서 처리한다.
+     */
     public void indexPending(Long projectId) {
         List<Artifact> pending = artifacts.findByProjectIdAndIndexedFalse(projectId);
         if (pending.isEmpty()) {
             return;
         }
+
+        List<Long> batchIds = new ArrayList<>();
         List<AiClient.ChunkPayload> payload = new ArrayList<>();
+        int sent = 0;
+
         for (Artifact a : pending) {
             List<String> chunks = chunker.chunk(a.getContent());
+            // 한 아티팩트의 청크는 쪼개지 않는다 — AI 서버가 요청에 담긴 아티팩트의 기존 청크를
+            // 지우고 새로 넣기 때문에, 나눠 보내면 앞서 보낸 것이 사라진다.
+            if (!payload.isEmpty() && payload.size() + chunks.size() > CHUNKS_PER_REQUEST) {
+                indexWriter.write(projectId, List.copyOf(payload), List.copyOf(batchIds));
+                sent += payload.size();
+                payload.clear();
+                batchIds.clear();
+            }
             for (int i = 0; i < chunks.size(); i++) {
                 payload.add(new AiClient.ChunkPayload(a.getId(), a.getType().name(), a.getTitle(),
                         a.getPath(), a.getUrl(), a.getAuthor(), a.getOccurredAt(), i, chunks.get(i)));
             }
+            batchIds.add(a.getId());
         }
-        if (payload.isEmpty()) {
-            // 본문이 빈 아티팩트(예: 메시지 없는 커밋)는 보낼 게 없으니 인덱싱된 셈 친다.
-            pending.forEach(Artifact::markIndexed);
-            return;
-        }
+        indexWriter.write(projectId, List.copyOf(payload), List.copyOf(batchIds));
+        sent += payload.size();
 
-        var res = ai.index(new AiClient.IndexRequest(projectId, payload));
-        pending.forEach(Artifact::markIndexed);
-
-        if (res != null && res.techStack() != null) {
-            projects.findById(projectId).ifPresent(p -> p.mergeTechStack(res.techStack()));
-        }
-        log.info("indexed project {}: {} chunks from {} artifacts", projectId, payload.size(), pending.size());
+        log.info("indexed project {}: {} chunks from {} artifacts", projectId, sent, pending.size());
     }
 
     @Transactional

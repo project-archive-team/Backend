@@ -8,6 +8,8 @@ import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** integration에 공유된 페이지를 훑어 블록 텍스트를 뽑는다. */
 @Component
@@ -45,11 +47,43 @@ public class NotionCollector implements Collector {
         return out;
     }
 
+    /**
+     * 사용자는 브라우저 주소를 그대로 붙여넣는다. Notion URL은 제목 뒤에 32자리 id가 붙는 형태라
+     * 그대로 쓰면 페이지를 못 찾는다 — id만 뽑아낸다. 비어 있으면 공유된 페이지 전체가 대상.
+     */
+    public static String normalizePageId(String ref) {
+        if (ref == null || ref.isBlank()) {
+            return null;
+        }
+        String s = ref.trim();
+        Matcher dashed = DASHED_UUID.matcher(s);
+        if (dashed.find()) {
+            return dashed.group();
+        }
+        Matcher plain = PLAIN_ID.matcher(s);
+        String last = null;
+        while (plain.find()) {
+            last = plain.group(1);
+        }
+        if (last != null) {
+            return last;
+        }
+        if (s.startsWith("http")) {
+            throw new IllegalArgumentException("페이지 ID를 찾을 수 없는 주소입니다: " + ref);
+        }
+        return s;
+    }
+
+    private static final Pattern DASHED_UUID =
+            Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+    private static final Pattern PLAIN_ID = Pattern.compile("([0-9a-fA-F]{32})");
+
     /** externalRef가 있으면 그 페이지 하나, 없으면 integration에 공유된 페이지 전부. */
     private List<JsonNode> pages(String externalRef, String token) {
         List<JsonNode> out = new ArrayList<>();
-        if (externalRef != null && !externalRef.isBlank()) {
-            out.add(http.get().uri("/v1/pages/{id}", externalRef)
+        String pageId = normalizePageId(externalRef);
+        if (pageId != null) {
+            out.add(http.get().uri("/v1/pages/{id}", pageId)
                     .headers(h -> auth(h, token)).retrieve().body(JsonNode.class));
             return out;
         }

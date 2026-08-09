@@ -2,7 +2,9 @@ package com.projectarchive.backend.project;
 
 import com.projectarchive.backend.ai.AiClient;
 import com.projectarchive.backend.collect.FileParser;
+import com.projectarchive.backend.collect.DriveCollector;
 import com.projectarchive.backend.collect.GithubCollector;
+import com.projectarchive.backend.collect.NotionCollector;
 import com.projectarchive.backend.collect.TokenStore;
 import com.projectarchive.backend.collect.SyncService;
 import com.projectarchive.backend.domain.*;
@@ -87,10 +89,14 @@ public class ProjectService {
             return expandOwner(project, userId, GithubCollector.ownerOf(req.externalRef()));
         }
 
-        String ref = req.type() == Source.Type.GITHUB
-                // 브랜치까지 붙은 URL을 그대로 두면 같은 저장소가 중복 등록된다.
-                ? GithubCollector.normalizeRepo(req.externalRef())
-                : req.externalRef();
+        // 사용자는 브라우저 주소를 그대로 붙여넣는다. 등록 시점에 식별자로 바꿔 둬야
+        // 같은 대상이 중복 등록되지 않고, 수집 때 "찾을 수 없음"으로 실패하지도 않는다.
+        String ref = switch (req.type()) {
+            case GITHUB -> GithubCollector.normalizeRepo(req.externalRef());
+            case GDRIVE -> DriveCollector.normalizeFolderId(req.externalRef());
+            case NOTION -> NotionCollector.normalizePageId(req.externalRef());
+            case UPLOAD -> req.externalRef();
+        };
 
         Source source = sources.findByProjectIdAndTypeAndExternalRef(projectId, req.type(), ref)
                 .orElseGet(() -> sources.save(new Source(project, req.type(), ref)));
