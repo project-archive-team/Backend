@@ -2,6 +2,7 @@ package com.projectarchive.backend.auth;
 
 import com.projectarchive.backend.domain.User;
 import com.projectarchive.backend.repo.UserRepository;
+import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -89,6 +90,24 @@ public class AuthController {
         user.updateProfile(req.name(), req.jobTitle(), req.bio(), req.theme(), req.techStack());
         return toView(user);
     }
+
+    /**
+     * "지금 로그인한 이 계정에 provider를 붙이겠다"는 의사를 세션에 남긴다.
+     *
+     * OAuth 콜백에는 우리 JWT가 실리지 않아서, 성공 핸들러는 provider가 준 이메일로 계정을 찾는다.
+     * 가입 이메일과 GitHub 이메일이 다르면 같은 사람인데도 계정이 하나 더 생긴다.
+     * 이 표시가 있으면 이메일 대신 이 사용자에게 붙인다.
+     *
+     * 세션 쿠키는 백엔드 도메인에 남아야 하므로 프론트는 프록시를 거치지 않고 직접 호출해야 한다.
+     */
+    @PostMapping("/link-intent")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void linkIntent(@CurrentUserId Long userId, HttpSession session) {
+        session.setAttribute(LINK_USER_ID, userId);
+    }
+
+    /** OAuth2SuccessHandler가 읽는다. */
+    public static final String LINK_USER_ID = "linkUserId";
 
     private static MeResponse toView(User user) {
         return new MeResponse(user.getId(), user.getEmail(), user.getName(),

@@ -6,6 +6,7 @@ import com.projectarchive.backend.repo.OauthTokenRepository;
 import com.projectarchive.backend.repo.UserRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,6 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
+import java.util.Optional;
 
 /**
  * OAuth 로그인 성공 시: 계정을 찾거나 만들고, provider 액세스 토큰을 수집용으로 저장한 뒤,
@@ -52,10 +54,13 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
         OAuth2User principal = oauthToken.getPrincipal();
 
         var client = authorizedClients.loadAuthorizedClient(registrationId, oauthToken.getName());
-        String email = resolveEmail(registrationId, principal, client);
-        String name = resolveName(registrationId, principal);
 
-        User user = users.findByEmail(email).orElseGet(() -> users.save(User.oauthOnly(email, name)));
+        User user = linkTarget(request).orElseGet(() -> {
+            // 연결 의사가 없으면 provider 이메일로 계정을 찾거나 만든다(= 소셜 로그인).
+            String email = resolveEmail(registrationId, principal, client);
+            String name = resolveName(registrationId, principal);
+            return users.findByEmail(email).orElseGet(() -> users.save(User.oauthOnly(email, name)));
+        });
 
         saveProviderToken(user, registrationId, client);
 
@@ -66,6 +71,22 @@ public class OAuth2SuccessHandler implements AuthenticationSuccessHandler {
                 .queryParam("refreshToken", refresh)
                 .build().toUriString();
         response.sendRedirect(target);
+    }
+
+    /**
+     * 로그인한 상태에서 연결을 시작했으면 그 계정에 붙인다.
+     *
+     * 표시는 한 번만 쓰고 지운다 — 남겨두면 다음 소셜 로그인이 엉뚱한 계정으로 붙는다.
+     */
+    // 테스트에서 직접 부른다.
+    Optional<User> linkTarget(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session == null) {
+            return Optional.empty();
+        }
+        Object userId = session.getAttribute(AuthController.LINK_USER_ID);
+        session.removeAttribute(AuthController.LINK_USER_ID);
+        return userId instanceof Long id ? users.findById(id) : Optional.empty();
     }
 
     private void saveProviderToken(User user, String registrationId, OAuth2AuthorizedClient client) {

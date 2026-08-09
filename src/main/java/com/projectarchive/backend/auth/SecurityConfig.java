@@ -33,11 +33,16 @@ public class SecurityConfig {
         http
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // API는 JWT로 무상태지만, OAuth 인가 요청과 "이 계정에 연결" 표시는 세션에 얹혀야 한다.
+                // STATELESS로 두면 세션이 만들어지지 않아 콜백에서 둘 다 사라진다.
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(auth -> auth
                         // 예외 발생 시 서블릿이 /error로 재디스패치하는데, JwtAuthFilter(OncePerRequestFilter)는
                         // ERROR 디스패치에서 재실행되지 않아 SecurityContext가 비어 401로 덮인다. ERROR는 통과시킨다.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        // 연결 대상은 "지금 로그인한 사람"이어야 한다. /api/auth/** 를 통째로 열어두면
+                        // 인증 없이도 통과하므로 이 경로만 먼저 잠근다.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/link-intent").authenticated()
                         .requestMatchers("/api/auth/**", "/oauth2/**", "/login/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
