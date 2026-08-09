@@ -44,11 +44,15 @@ public class GithubCollector implements Collector {
     @Override
     public List<RawItem> collect(Source source, String accessToken) {
         String repo = normalizeRepo(source.getExternalRef());
+        // owner와 이름을 따로 넘긴다. "owner/name"을 URI 변수 하나로 주면 RestClient가 슬래시를
+        // %2F로 인코딩해 /repos/owner%2Fname 이 되고, GitHub은 404를 돌려준다.
+        String owner = repo.substring(0, repo.indexOf('/'));
+        String name = repo.substring(repo.indexOf('/') + 1);
         try {
             List<RawItem> items = new ArrayList<>();
-            items.addAll(commits(repo, accessToken));
-            items.addAll(pullRequests(repo, accessToken));
-            items.addAll(files(repo, accessToken));
+            items.addAll(commits(owner, name, accessToken));
+            items.addAll(pullRequests(owner, name, accessToken));
+            items.addAll(files(owner, name, accessToken));
             return items;
         } catch (HttpClientErrorException e) {
             throw new IllegalStateException(explain(repo, e.getStatusCode().value()), e);
@@ -78,9 +82,9 @@ public class GithubCollector implements Collector {
      * PR은 본문에 "왜 이렇게 고쳤는지"가 남아 있어 포트폴리오 근거로 커밋보다 값이 크다.
      * 병합 여부와 리뷰 논의가 드러나도록 상태와 본문을 함께 담는다.
      */
-    private List<RawItem> pullRequests(String repo, String token) {
-        JsonNode arr = get(token, "/repos/{repo}/pulls?state=all&per_page=" + PR_LIMIT
-                + "&sort=updated&direction=desc", repo);
+    private List<RawItem> pullRequests(String owner, String name, String token) {
+        JsonNode arr = get(token, "/repos/{owner}/{name}/pulls?state=all&per_page=" + PR_LIMIT
+                + "&sort=updated&direction=desc", owner, name);
         List<RawItem> out = new ArrayList<>();
         for (JsonNode pr : arr) {
             out.add(toPullRequestItem(pr));
@@ -178,8 +182,8 @@ public class GithubCollector implements Collector {
         return out;
     }
 
-    private List<RawItem> commits(String repo, String token) {
-        JsonNode arr = get(token, "/repos/{repo}/commits?per_page=" + COMMIT_LIMIT, repo);
+    private List<RawItem> commits(String owner, String name, String token) {
+        JsonNode arr = get(token, "/repos/{owner}/{name}/commits?per_page=" + COMMIT_LIMIT, owner, name);
         List<RawItem> out = new ArrayList<>();
         for (JsonNode c : arr) {
             JsonNode commit = c.path("commit");
@@ -200,11 +204,14 @@ public class GithubCollector implements Collector {
         return out;
     }
 
-    private List<RawItem> files(String repo, String token) {
-        JsonNode repoInfo = get(token, "/repos/{repo}", repo);
+    private List<RawItem> files(String owner, String name, String token) {
+        String repo = owner + "/" + name;
+        JsonNode repoInfo = get(token, "/repos/{owner}/{name}", owner, name);
         String branch = repoInfo.path("default_branch").asString("main");
 
-        JsonNode tree = get(token, "/repos/{repo}/git/trees/" + branch + "?recursive=1", repo).path("tree");
+        // 브랜치명은 템플릿에 끼우지 않고 이어붙인다 — "feature/x"처럼 슬래시가 들어가도 경로로 남아야 한다.
+        JsonNode tree = get(token, "/repos/{owner}/{name}/git/trees/" + branch + "?recursive=1", owner, name)
+                .path("tree");
         List<RawItem> out = new ArrayList<>();
         for (JsonNode node : tree) {
             if (out.size() >= FILE_LIMIT) {
@@ -218,7 +225,7 @@ public class GithubCollector implements Collector {
             if (!isText(path)) {
                 continue;
             }
-            String content = fileContent(repo, node.path("sha").asString(), token);
+            String content = fileContent(owner, name, node.path("sha").asString(), token);
             if (content == null) {
                 continue;
             }
@@ -236,9 +243,10 @@ public class GithubCollector implements Collector {
         return out;
     }
 
-    private String fileContent(String repo, String blobSha, String token) {
+    private String fileContent(String owner, String name, String blobSha, String token) {
+        String repo = owner + "/" + name;
         try {
-            JsonNode blob = get(token, "/repos/{repo}/git/blobs/" + blobSha, repo);
+            JsonNode blob = get(token, "/repos/{owner}/{name}/git/blobs/{sha}", owner, name, blobSha);
             if (!"base64".equals(blob.path("encoding").asString())) {
                 return null;
             }
