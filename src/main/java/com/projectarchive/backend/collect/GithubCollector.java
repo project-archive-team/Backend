@@ -62,9 +62,12 @@ public class GithubCollector implements Collector {
      * 공개 저장소조차 우리 토큰으로는 404로 돌아온다 — 원인이 완전히 다르니 짚어준다.
      */
     private static String explain(String repo, int status) {
+        String owner = repo.substring(0, repo.indexOf('/'));
         return switch (status) {
-            case 404 -> repo + " 에 접근할 수 없습니다. 저장소 주소가 맞는지, 그리고 조직 설정에서 "
-                    + "이 앱의 접근을 승인(Grant)했는지 확인해 주세요. 승인 전에는 공개 저장소도 404로 막힙니다.";
+            // 이미 승인한 계정에는 GitHub이 인가 화면을 다시 띄우지 않는다 — 조직 설정 링크를 바로 준다.
+            case 404 -> repo + " 에 접근할 수 없습니다. 저장소 주소가 맞는지, 그리고 조직이 이 앱 접근을 "
+                    + "승인했는지 확인해 주세요. 승인 전에는 공개 저장소도 404로 막힙니다. "
+                    + "승인: https://github.com/organizations/" + owner + "/settings/oauth_application_policy";
             case 401 -> "GitHub 인증이 만료되었습니다. 다시 로그인해 주세요.";
             case 403 -> "GitHub API 호출 한도에 걸렸거나 접근이 거부되었습니다. 잠시 뒤 다시 시도해 주세요.";
             default -> repo + " 수집 실패 (GitHub " + status + ")";
