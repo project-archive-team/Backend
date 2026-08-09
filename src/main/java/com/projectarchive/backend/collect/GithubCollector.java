@@ -13,7 +13,6 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.Set;
 
 @Component
 @Slf4j
@@ -26,10 +25,6 @@ public class GithubCollector implements Collector {
     private static final int FILE_LIMIT = 60;
 
     private static final int MAX_FILE_BYTES = 200_000;
-
-    private static final Set<String> TEXT_EXT = Set.of(
-            "java", "kt", "py", "js", "jsx", "ts", "tsx", "go", "rs", "rb", "c", "h", "cpp", "cs",
-            "sql", "sh", "yml", "yaml", "json", "toml", "gradle", "xml", "md", "txt");
 
     private final RestClient http = RestClient.builder().baseUrl("https://api.github.com").build();
 
@@ -270,8 +265,8 @@ public class GithubCollector implements Collector {
     }
 
     private static boolean isText(String path) {
-        int dot = path.lastIndexOf('.');
-        return dot > 0 && TEXT_EXT.contains(path.substring(dot + 1).toLowerCase());
+        // 확장자 목록은 FileParser가 들고 있다 — 수집 경로마다 따로 두면 어긋난다.
+        return FileParser.isTextExtension(path.toLowerCase());
     }
 
     private static String firstLine(String message) {
