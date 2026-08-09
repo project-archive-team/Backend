@@ -60,10 +60,7 @@ app:
 server:
   # nginx 뒤에 있다. 이게 없으면 X-Forwarded-Proto를 무시하고 OAuth redirect_uri를 http로 만든다.
   forward-headers-strategy: framework
-  error:
-    # 기본값이면 응답에 error:"Bad Request"만 담겨서 화면이 원인을 못 보여준다.
-    # 우리가 던지는 사유는 전부 사용자에게 보여줄 문구다.
-    include-message: always
+  # 오류 본문은 ApiExceptionHandler가 직접 만든다 — 기본 응답에는 사유가 안 담긴다.
 
 management:
   endpoints:

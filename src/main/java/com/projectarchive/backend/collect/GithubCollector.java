@@ -91,20 +91,67 @@ public class GithubCollector implements Collector {
                 pr.path("html_url").asString(null));
     }
 
+    /** org 하나를 통째로 등록했을 때 펼칠 저장소 수 상한. 전부 긁으면 수집이 몇 분씩 걸린다. */
+    static final int ORG_REPO_LIMIT = 10;
+
     /** "https://github.com/owner/repo.git", "owner/repo" 등을 owner/repo로 통일. */
-    static String normalizeRepo(String ref) {
-        if (ref == null || ref.isBlank()) {
-            throw new IllegalArgumentException("github source needs a repo reference");
-        }
-        String s = ref.trim();
-        s = s.replaceFirst("^https?://github\\.com/", "");
-        s = s.replaceFirst("\\.git$", "");
-        s = s.replaceAll("^/+", "").replaceAll("/+$", "");
-        String[] parts = s.split("/");
+    public static String normalizeRepo(String ref) {
+        String[] parts = segments(ref);
         if (parts.length < 2 || parts[0].isBlank() || parts[1].isBlank()) {
             throw new IllegalArgumentException("cannot parse repo from: " + ref);
         }
         return parts[0] + "/" + parts[1];
+    }
+
+    /** 저장소가 아니라 계정/조직만 가리키는 주소인지. 예: "https://github.com/project-archive-team" */
+    public static boolean isOwnerOnly(String ref) {
+        String[] parts = segments(ref);
+        return parts.length == 1 && !parts[0].isBlank();
+    }
+
+    public static String ownerOf(String ref) {
+        return segments(ref)[0];
+    }
+
+    private static String[] segments(String ref) {
+        if (ref == null || ref.isBlank()) {
+            throw new IllegalArgumentException("github source needs a repo reference");
+        }
+        String s = ref.trim()
+                .replaceFirst("^https?://github\\.com/", "")
+                .replaceFirst("\\.git$", "")
+                .replaceAll("^/+", "")
+                .replaceAll("/+$", "");
+        return s.split("/");
+    }
+
+    /**
+     * 조직(또는 사용자) 아래 저장소 목록. 포트폴리오 근거가 되려면 본인이 실제로 만든 것이어야 하니
+     * 포크와 아카이브는 뺀다. 최근에 손댄 것부터 상한만큼만.
+     */
+    public List<String> listRepos(String owner, String token) {
+        JsonNode arr;
+        try {
+            arr = get(token, "/orgs/{owner}/repos?per_page=100&sort=updated&direction=desc", owner);
+        } catch (Exception e) {
+            // 조직이 아니라 개인 계정이면 /orgs가 404다.
+            arr = get(token, "/users/{owner}/repos?per_page=100&sort=updated&direction=desc", owner);
+        }
+        return pickRepos(arr);
+    }
+
+    static List<String> pickRepos(JsonNode arr) {
+        List<String> out = new ArrayList<>();
+        for (JsonNode repo : arr) {
+            if (repo.path("fork").asBoolean() || repo.path("archived").asBoolean()) {
+                continue;
+            }
+            out.add(repo.path("full_name").asString());
+            if (out.size() >= ORG_REPO_LIMIT) {
+                break;
+            }
+        }
+        return out;
     }
 
     private List<RawItem> commits(String repo, String token) {

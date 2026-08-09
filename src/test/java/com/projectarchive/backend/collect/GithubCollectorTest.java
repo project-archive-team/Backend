@@ -65,6 +65,47 @@ class GithubCollectorTest {
     }
 
     @Test
+    void tellsOrganizationAddressFromRepositoryAddress() {
+        // 조직/계정만 가리키는 주소 — 저장소별로 펼쳐야 한다.
+        assertThat(GithubCollector.isOwnerOnly("https://github.com/project-archive-team")).isTrue();
+        assertThat(GithubCollector.isOwnerOnly("https://github.com/project-archive-team/")).isTrue();
+        assertThat(GithubCollector.isOwnerOnly("project-archive-team")).isTrue();
+        assertThat(GithubCollector.ownerOf("https://github.com/project-archive-team")).isEqualTo("project-archive-team");
+
+        // 저장소까지 있으면 그대로 하나만 등록한다.
+        assertThat(GithubCollector.isOwnerOnly("https://github.com/owner/repo")).isFalse();
+        assertThat(GithubCollector.isOwnerOnly("owner/repo")).isFalse();
+        assertThat(GithubCollector.isOwnerOnly("https://github.com/owner/repo/tree/main")).isFalse();
+    }
+
+    @Test
+    void organizationExpansionSkipsForksAndArchivedAndRespectsTheLimit() {
+        var repos = JSON.readTree("""
+                [
+                  {"full_name": "org/Backend",   "fork": false, "archived": false},
+                  {"full_name": "org/forked",    "fork": true,  "archived": false},
+                  {"full_name": "org/retired",   "fork": false, "archived": true},
+                  {"full_name": "org/Frontend",  "fork": false, "archived": false}
+                ]
+                """);
+
+        assertThat(GithubCollector.pickRepos(repos))
+                .containsExactly("org/Backend", "org/Frontend");
+    }
+
+    @Test
+    void organizationExpansionStopsAtTheLimit() {
+        var sb = new StringBuilder("[");
+        for (int i = 0; i < GithubCollector.ORG_REPO_LIMIT + 5; i++) {
+            sb.append(i > 0 ? "," : "")
+              .append("{\"full_name\":\"org/r").append(i).append("\",\"fork\":false,\"archived\":false}");
+        }
+        var repos = JSON.readTree(sb.append("]").toString());
+
+        assertThat(GithubCollector.pickRepos(repos)).hasSize(GithubCollector.ORG_REPO_LIMIT);
+    }
+
+    @Test
     void rejectsGarbage() {
         assertThatThrownBy(() -> GithubCollector.normalizeRepo(null))
                 .isInstanceOf(IllegalArgumentException.class);

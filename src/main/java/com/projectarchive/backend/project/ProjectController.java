@@ -41,10 +41,11 @@ public class ProjectController {
         service.delete(id, userId);
     }
 
+    /** 조직 주소를 넣으면 저장소별로 펼쳐지므로 목록으로 돌려준다. */
     @PostMapping("/{id}/sources")
     @ResponseStatus(HttpStatus.CREATED)
-    public SourceView addSource(@CurrentUserId Long userId, @PathVariable Long id,
-                                @Valid @RequestBody AddSourceRequest req) {
+    public List<SourceView> addSource(@CurrentUserId Long userId, @PathVariable Long id,
+                                      @Valid @RequestBody AddSourceRequest req) {
         return service.addSource(id, userId, req);
     }
 

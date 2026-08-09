@@ -2,6 +2,8 @@ package com.projectarchive.backend.project;
 
 import com.projectarchive.backend.ai.AiClient;
 import com.projectarchive.backend.collect.FileParser;
+import com.projectarchive.backend.collect.GithubCollector;
+import com.projectarchive.backend.collect.TokenStore;
 import com.projectarchive.backend.collect.SyncService;
 import com.projectarchive.backend.domain.*;
 import com.projectarchive.backend.repo.*;
@@ -31,6 +33,8 @@ public class ProjectService {
     private final FileParser fileParser;
     private final SyncService syncService;
     private final AiClient ai;
+    private final TokenStore tokenStore;
+    private final GithubCollector githubCollector;
 
     /** 모든 진입점이 이걸 거친다 — 남의 프로젝트는 404. */
     @Transactional(readOnly = true)
@@ -66,15 +70,56 @@ public class ProjectService {
         projects.delete(project);
     }
 
+    /**
+     * 수집 대상 등록.
+     *
+     * GitHub은 조직/계정 주소를 받으면 그 아래 저장소를 각각의 소스로 펼친다 —
+     * 보통 저장소 단위로 스택이 갈리므로 상태·재수집·삭제도 저장소 단위로 다뤄야 한다.
+     */
     @Transactional
-    public SourceView addSource(Long projectId, Long userId, AddSourceRequest req) {
+    public List<SourceView> addSource(Long projectId, Long userId, AddSourceRequest req) {
         Project project = owned(projectId, userId);
         if (req.type() == Source.Type.GITHUB && (req.externalRef() == null || req.externalRef().isBlank())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "GitHub 소스는 저장소 URL이 필요합니다");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "GitHub 소스는 저장소 또는 조직 주소가 필요합니다");
         }
-        Source source = sources.findByProjectIdAndTypeAndExternalRef(projectId, req.type(), req.externalRef())
-                .orElseGet(() -> sources.save(new Source(project, req.type(), req.externalRef())));
-        return toView(source);
+
+        if (req.type() == Source.Type.GITHUB && GithubCollector.isOwnerOnly(req.externalRef())) {
+            return expandOwner(project, userId, GithubCollector.ownerOf(req.externalRef()));
+        }
+
+        String ref = req.type() == Source.Type.GITHUB
+                // 브랜치까지 붙은 URL을 그대로 두면 같은 저장소가 중복 등록된다.
+                ? GithubCollector.normalizeRepo(req.externalRef())
+                : req.externalRef();
+
+        Source source = sources.findByProjectIdAndTypeAndExternalRef(projectId, req.type(), ref)
+                .orElseGet(() -> sources.save(new Source(project, req.type(), ref)));
+        return List.of(toView(source));
+    }
+
+    private List<SourceView> expandOwner(Project project, Long userId, String owner) {
+        String token = tokenStore.accessToken(userId, OauthToken.Provider.GITHUB)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "조직 전체를 등록하려면 GitHub 로그인이 먼저 필요합니다"));
+
+        List<String> repos;
+        try {
+            repos = githubCollector.listRepos(owner, token);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    owner + " 의 저장소 목록을 가져오지 못했습니다: " + e.getMessage());
+        }
+        if (repos.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    owner + " 아래에 수집할 저장소가 없습니다 (포크·아카이브 제외)");
+        }
+
+        return repos.stream()
+                .map(repo -> sources
+                        .findByProjectIdAndTypeAndExternalRef(project.getId(), Source.Type.GITHUB, repo)
+                        .orElseGet(() -> sources.save(new Source(project, Source.Type.GITHUB, repo))))
+                .map(ProjectService::toView)
+                .toList();
     }
 
     @Transactional
