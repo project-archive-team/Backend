@@ -184,13 +184,14 @@ public class ProjectService {
         Source source = sources.findByProjectIdAndTypeAndExternalRef(projectId, Source.Type.UPLOAD, null)
                 .orElseGet(() -> sources.save(new Source(project, Source.Type.UPLOAD, null)));
 
+        String author = users.findById(userId).map(User::getName).orElse(null);
         Artifact artifact = artifacts.findBySourceIdAndExternalId(source.getId(), req.title())
                 .map(existing -> {
                     existing.updateContent(req.title(), req.content(), Instant.now());
                     return existing;
                 })
                 .orElseGet(() -> artifacts.save(new Artifact(project, source, req.type(),
-                        req.title(), req.title(), null, req.content(), null, Instant.now(), null)));
+                        req.title(), req.title(), null, req.content(), author, Instant.now(), null)));
         artifact.replaceTags(req.tags());
         source.markDone();
         return ArtifactView.of(artifact);
