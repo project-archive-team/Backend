@@ -4,6 +4,7 @@ import tools.jackson.databind.JsonNode;
 import com.projectarchive.backend.domain.Artifact;
 import com.projectarchive.backend.domain.Source;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.util.ArrayList;
@@ -29,6 +30,31 @@ public class NotionCollector implements Collector {
 
     @Override
     public List<RawItem> collect(Source source, String accessToken) {
+        try {
+            return collectPages(source, accessToken);
+        } catch (HttpClientErrorException e) {
+            throw new IllegalStateException(explain(e.getStatusCode().value()), e);
+        }
+    }
+
+    /**
+     * Notion 응답 본문을 그대로 흘리면 읽을 수가 없다.
+     *
+     * 403은 토큰이 틀린 게 아니라 "그 페이지를 integration에 공유하지 않았다"는 뜻인 경우가 대부분이다.
+     * 원인이 완전히 다르니 무엇을 해야 하는지 짚어준다.
+     */
+    private static String explain(int status) {
+        return switch (status) {
+            case 401 -> "Notion 토큰이 올바르지 않습니다. Integration 토큰(secret_로 시작)을 다시 등록해 주세요.";
+            case 403 -> "Notion이 접근을 거부했습니다. 페이지를 integration에 공유했는지 확인해 주세요 — "
+                    + "Notion 페이지 우상단 [...] → 연결(Connections) → 해당 integration 추가.";
+            case 404 -> "페이지를 찾을 수 없습니다. 주소가 맞는지, 그리고 그 페이지가 integration에 공유됐는지 확인해 주세요.";
+            case 429 -> "Notion 호출 한도에 걸렸습니다. 잠시 뒤 다시 시도해 주세요.";
+            default -> "Notion 수집 실패 (" + status + ")";
+        };
+    }
+
+    private List<RawItem> collectPages(Source source, String accessToken) {
         List<RawItem> out = new ArrayList<>();
         for (JsonNode page : pages(source.getExternalRef(), accessToken)) {
             String id = page.path("id").asString();
