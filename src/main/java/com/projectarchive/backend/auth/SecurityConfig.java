@@ -59,7 +59,9 @@ public class SecurityConfig {
     CorsConfigurationSource corsConfigurationSource() {
         var config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
-        config.setAllowedMethods(List.of("GET", "POST", "PATCH", "DELETE", "OPTIONS"));
+        // PUT이 빠져 있어 Notion 토큰 저장(API 유일의 PUT)만 "Invalid CORS request" 403으로 막혔다.
+        // 메서드를 하나씩 세는 대신 전부 허용한다 — 어차피 인증은 JWT가 따로 본다.
+        config.setAllowedMethods(List.of("*"));
         config.setAllowedHeaders(List.of("*"));
         config.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();
